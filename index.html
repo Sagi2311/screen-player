@@ -26,7 +26,7 @@
                 videoId: videoId,
                 playerVars: {
                     autoplay: 1,
-                    mute: 1, // 🔇 ეკრანი არის 100%-ით დადამუნჯებული (0 ორმაგი ხმა)
+                    mute: 1, // 🔇 ეკრანი დადამუნჯებულია (ხმა მოდის მხოლოდ xsound-იდან)
                     controls: 0,
                     showinfo: 0,
                     rel: 0,
@@ -55,21 +55,31 @@
                     player.setVolume(0);
                 }
 
-                // ვამოწმებთ, რომ ნამდვილად ჩვენი ვიდეო დაიწყო და არა რეკლამა
                 const activeId = player.getVideoData ? player.getVideoData().video_id : '';
                 if (!hasReported && (!activeId || activeId === videoId)) {
                     hasReported = true;
-                    // ატყობინებს FiveM-ს xsound-ის ჩასართავად
+
+                    // ⏸️ 1. მომენტალურად ვაპაუზებთ ვიდეოს 0:00-ზე
+                    player.pauseVideo();
+
+                    // 📡 2. FiveM-ს ვაძლევთ ბრძანებას, რომ xsound-მა დაიწყოს ჩატვირთვა
                     fetch('https://qbx_screens/videoPlaybackStarted', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ status: 'started' })
                     }).catch(() => {});
+
+                    // ▶️ 3. ზუსტად 1200ms-ში (სანამ xsound აუდიოს გაუშვებს), ვრთავთ ვიდეოს
+                    setTimeout(() => {
+                        if (player && player.playVideo) {
+                            player.playVideo();
+                        }
+                    }, 1200);
                 }
             }
         }
 
-        // ⚡ Skip Ad ღილაკის ავტომატური დაჭერა (მოწმდება ყოველ 100ms-ში)
+        // ⚡ Skip Ad ავტო-დაჭერის ძრავი
         function startAggressiveAutoSkip() {
             const skipSelectors = [
                 '.ytp-ad-skip-button',
@@ -84,7 +94,6 @@
             ];
 
             setInterval(() => {
-                // ვეძებთ როგორც ძირითად დოკუმენტში, ასევე iframe-ის შიგნით
                 const targets = [document];
                 const iframes = document.querySelectorAll('iframe');
                 iframes.forEach(frame => {
@@ -95,7 +104,6 @@
                 });
 
                 for (const doc of targets) {
-                    // 1. თუ რეკლამის ვიდეოა, ცდილობს მომენტალურად გადაახვიოს ბოლომდე
                     try {
                         const vids = doc.querySelectorAll('video');
                         vids.forEach(v => {
@@ -109,7 +117,6 @@
                         });
                     } catch (e) {}
 
-                    // 2. როგორც კი გამოჩნდება Skip ღილაკი, მომენტალურად აჭერს
                     for (const sel of skipSelectors) {
                         try {
                             const btn = doc.querySelector(sel);
@@ -123,7 +130,7 @@
             }, 100);
         }
 
-        // 🔇 საიტის ნებისმიერი აუდიოს იძულებითი დახშობა
+        // 🔇 საიტის აუდიოს იძულებითი ჩახშობა
         setInterval(() => {
             try {
                 const media = document.querySelectorAll('video, audio');
