@@ -26,7 +26,7 @@
                 videoId: videoId,
                 playerVars: {
                     autoplay: 1,
-                    mute: 1, // 🔇 სრულად თიშავს ეკრანის საკუთარ ხმას (აღარ იქნება 2 ხმა!)
+                    mute: 1, // 🔇 ეკრანი არის 100%-ით დადამუნჯებული (0 ორმაგი ხმა)
                     controls: 0,
                     showinfo: 0,
                     rel: 0,
@@ -39,7 +39,9 @@
                 events: {
                     'onReady': (e) => {
                         e.target.mute();
+                        e.target.setVolume(0);
                         e.target.playVideo();
+                        startAggressiveAutoSkip();
                     },
                     'onStateChange': onPlayerStateChange
                 }
@@ -47,11 +49,17 @@
         }
 
         function onPlayerStateChange(event) {
-            // როდესაც ნამდვილი ვიდეო იწყება (რეკლამის დასრულებისთანავე)
             if (event.data === YT.PlayerState.PLAYING) {
-                if (!hasReported) {
+                if (player && player.mute) {
+                    player.mute();
+                    player.setVolume(0);
+                }
+
+                // ვამოწმებთ, რომ ნამდვილად ჩვენი ვიდეო დაიწყო და არა რეკლამა
+                const activeId = player.getVideoData ? player.getVideoData().video_id : '';
+                if (!hasReported && (!activeId || activeId === videoId)) {
                     hasReported = true;
-                    // ატყობინებს FiveM-ს, რომ ჩართოს xsound-ის ხმა ზუსტად ახლა!
+                    // ატყობინებს FiveM-ს xsound-ის ჩასართავად
                     fetch('https://qbx_screens/videoPlaybackStarted', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -60,6 +68,71 @@
                 }
             }
         }
+
+        // ⚡ Skip Ad ღილაკის ავტომატური დაჭერა (მოწმდება ყოველ 100ms-ში)
+        function startAggressiveAutoSkip() {
+            const skipSelectors = [
+                '.ytp-ad-skip-button',
+                '.ytp-ad-skip-button-modern',
+                '.ytp-skip-ad-button',
+                '.ytp-ad-skip-button-slot',
+                'button.ytp-ad-skip-button-modern',
+                '.videoAdUiSkipButton',
+                '.ytp-ad-preview-container',
+                'button[class*="skip"]',
+                'div[class*="skip-button"]'
+            ];
+
+            setInterval(() => {
+                // ვეძებთ როგორც ძირითად დოკუმენტში, ასევე iframe-ის შიგნით
+                const targets = [document];
+                const iframes = document.querySelectorAll('iframe');
+                iframes.forEach(frame => {
+                    try {
+                        const frameDoc = frame.contentDocument || frame.contentWindow.document;
+                        if (frameDoc) targets.push(frameDoc);
+                    } catch (e) {}
+                });
+
+                for (const doc of targets) {
+                    // 1. თუ რეკლამის ვიდეოა, ცდილობს მომენტალურად გადაახვიოს ბოლომდე
+                    try {
+                        const vids = doc.querySelectorAll('video');
+                        vids.forEach(v => {
+                            v.muted = true;
+                            v.volume = 0;
+                            if (v.closest && v.closest('.ad-showing, .ad-interrupting')) {
+                                if (v.duration && !isNaN(v.duration)) {
+                                    v.currentTime = v.duration;
+                                }
+                            }
+                        });
+                    } catch (e) {}
+
+                    // 2. როგორც კი გამოჩნდება Skip ღილაკი, მომენტალურად აჭერს
+                    for (const sel of skipSelectors) {
+                        try {
+                            const btn = doc.querySelector(sel);
+                            if (btn && typeof btn.click === 'function') {
+                                btn.click();
+                                break;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }, 100);
+        }
+
+        // 🔇 საიტის ნებისმიერი აუდიოს იძულებითი დახშობა
+        setInterval(() => {
+            try {
+                const media = document.querySelectorAll('video, audio');
+                media.forEach(m => {
+                    m.muted = true;
+                    m.volume = 0;
+                });
+            } catch (e) {}
+        }, 200);
     </script>
 </body>
 </html>
