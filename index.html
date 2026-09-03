@@ -3,25 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FiveM Cinema Player</title>
+    <title>FiveM Screen</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        html, body {
-            width: 100%;
-            height: 100%;
-            background-color: #000;
-            overflow: hidden;
-        }
-        #player {
-            width: 100vw;
-            height: 100vh;
-            border: none;
-            pointer-events: none;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        #player { width: 100vw; height: 100vh; border: none; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -33,13 +19,14 @@
         const videoId = urlParams.get('v') || 'hyF9INcLSZs';
 
         let player;
-        let hasReportedStart = false;
+        let hasReported = false;
 
         function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
                 videoId: videoId,
                 playerVars: {
                     autoplay: 1,
+                    mute: 1, // 🔇 სრულად თიშავს ეკრანის საკუთარ ხმას (აღარ იქნება 2 ხმა!)
                     controls: 0,
                     showinfo: 0,
                     rel: 0,
@@ -50,61 +37,28 @@
                     fs: 0
                 },
                 events: {
-                    'onReady': onPlayerReady,
+                    'onReady': (e) => {
+                        e.target.mute();
+                        e.target.playVideo();
+                    },
                     'onStateChange': onPlayerStateChange
                 }
             });
         }
 
-        function onPlayerReady(event) {
-            event.target.playVideo();
-            startAdBuster();
-        }
-
         function onPlayerStateChange(event) {
-            // როცა ნამდვილი ვიდეო იწყებს დაკვრას (რეკლამის შემდეგ)
+            // როდესაც ნამდვილი ვიდეო იწყება (რეკლამის დასრულებისთანავე)
             if (event.data === YT.PlayerState.PLAYING) {
-                if (!hasReportedStart) {
-                    hasReportedStart = true;
-                    // აგზავნის სიგნალს FiveM-ში xsound-ის სინქრონიზაციისთვის
+                if (!hasReported) {
+                    hasReported = true;
+                    // ატყობინებს FiveM-ს, რომ ჩართოს xsound-ის ხმა ზუსტად ახლა!
                     fetch('https://qbx_screens/videoPlaybackStarted', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ currentTime: player.getCurrentTime() })
+                        body: JSON.stringify({ status: 'started' })
                     }).catch(() => {});
                 }
             }
-        }
-
-        // ⚡ Ad-Buster Engine (მოწმდება ყოველ 100 მილიწამში)
-        function startAdBuster() {
-            setInterval(() => {
-                // 1. რეკლამის ვიდეოს მომენტალური გადახვევა ბოლომდე
-                const adVideo = document.querySelector('.ad-showing video, video.ad-interrupting');
-                if (adVideo) {
-                    adVideo.muted = true;
-                    if (adVideo.duration && !isNaN(adVideo.duration)) {
-                        adVideo.currentTime = adVideo.duration;
-                    }
-                }
-
-                // 2. YouTube-ის Skip ღილაკზე ავტომატური დაჭერა
-                const skipSelectors = [
-                    '.ytp-ad-skip-button',
-                    '.ytp-ad-skip-button-modern',
-                    '.ytp-skip-ad-button',
-                    '.ytp-ad-skip-button-slot',
-                    'button.ytp-ad-skip-button-modern'
-                ];
-
-                for (const selector of skipSelectors) {
-                    const btn = document.querySelector(selector);
-                    if (btn) {
-                        btn.click();
-                        break;
-                    }
-                }
-            }, 100);
         }
     </script>
 </body>
