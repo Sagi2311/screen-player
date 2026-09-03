@@ -1,27 +1,111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Screen Player</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100vw; height: 100vh; overflow: hidden; background: #000; }
-    iframe { width: 100%; height: 100%; border: none; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FiveM Cinema Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            overflow: hidden;
+        }
+        #player {
+            width: 100vw;
+            height: 100vh;
+            border: none;
+            pointer-events: none;
+        }
+    </style>
 </head>
 <body>
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const videoId = params.get('v');
+    <div id="player"></div>
 
-    if (videoId) {
-      const iframe = document.createElement('iframe');
-      iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0`;
-      iframe.allow = "autoplay; encrypted-media";
-      iframe.allowFullscreen = true;
-      document.body.appendChild(iframe);
-    }
-  </script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoId = urlParams.get('v') || 'hyF9INcLSZs';
+
+        let player;
+        let hasReportedStart = false;
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                videoId: videoId,
+                playerVars: {
+                    autoplay: 1,
+                    controls: 0,
+                    showinfo: 0,
+                    rel: 0,
+                    modestbranding: 1,
+                    playsinline: 1,
+                    iv_load_policy: 3,
+                    disablekb: 1,
+                    fs: 0
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            event.target.playVideo();
+            startAdBuster();
+        }
+
+        function onPlayerStateChange(event) {
+            // როცა ნამდვილი ვიდეო იწყებს დაკვრას (რეკლამის შემდეგ)
+            if (event.data === YT.PlayerState.PLAYING) {
+                if (!hasReportedStart) {
+                    hasReportedStart = true;
+                    // აგზავნის სიგნალს FiveM-ში xsound-ის სინქრონიზაციისთვის
+                    fetch('https://qbx_screens/videoPlaybackStarted', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ currentTime: player.getCurrentTime() })
+                    }).catch(() => {});
+                }
+            }
+        }
+
+        // ⚡ Ad-Buster Engine (მოწმდება ყოველ 100 მილიწამში)
+        function startAdBuster() {
+            setInterval(() => {
+                // 1. რეკლამის ვიდეოს მომენტალური გადახვევა ბოლომდე
+                const adVideo = document.querySelector('.ad-showing video, video.ad-interrupting');
+                if (adVideo) {
+                    adVideo.muted = true;
+                    if (adVideo.duration && !isNaN(adVideo.duration)) {
+                        adVideo.currentTime = adVideo.duration;
+                    }
+                }
+
+                // 2. YouTube-ის Skip ღილაკზე ავტომატური დაჭერა
+                const skipSelectors = [
+                    '.ytp-ad-skip-button',
+                    '.ytp-ad-skip-button-modern',
+                    '.ytp-skip-ad-button',
+                    '.ytp-ad-skip-button-slot',
+                    'button.ytp-ad-skip-button-modern'
+                ];
+
+                for (const selector of skipSelectors) {
+                    const btn = document.querySelector(selector);
+                    if (btn) {
+                        btn.click();
+                        break;
+                    }
+                }
+            }, 100);
+        }
+    </script>
 </body>
 </html>
