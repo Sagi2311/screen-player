@@ -3,143 +3,215 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FiveM Screen</title>
+    <title>FiveM Cinema & YouTube Player</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #player { width: 100vw; height: 100vh; border: none; pointer-events: none; }
+        #player, #videoPlayer { width: 100vw; height: 100vh; border: none; object-fit: cover; }
+        #videoPlayer { display: none; }
     </style>
+    <!-- HLS.js პირდაპირი .m3u8 ნაკადებისთვის -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- YouTube Iframe API -->
+    <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
     <div id="player"></div>
+    <video id="videoPlayer" playsinline autoplay></video>
 
-    <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const videoId = urlParams.get('v') || 'hyF9INcLSZs';
+        let streamUrl = urlParams.get('url');
+        let videoId = urlParams.get('v');
 
+        // ავტომატური ამოცნობა: თუ 'v'-ში პირდაპირი ბმული მოვიდა
+        if (!streamUrl && videoId && (videoId.startsWith('http://') || videoId.startsWith('https://') || videoId.includes('.m3u8') || videoId.includes('.mp4'))) {
+            streamUrl = videoId;
+            videoId = null;
+        }
+
+        let isDirectStream = !!streamUrl;
         let player;
         let hasReported = false;
 
-        function onYouTubeIframeAPIReady() {
-            player = new YT.Player('player', {
-                videoId: videoId,
-                playerVars: {
-                    autoplay: 1,
-                    mute: 1, // 🔇 ეკრანი დადამუნჯებულია (ხმა მოდის მხოლოდ xsound-იდან)
-                    controls: 0,
-                    showinfo: 0,
-                    rel: 0,
-                    modestbranding: 1,
-                    playsinline: 1,
-                    iv_load_policy: 3,
-                    disablekb: 1,
-                    fs: 0
-                },
-                events: {
-                    'onReady': (e) => {
-                        e.target.mute();
-                        e.target.setVolume(0);
-                        e.target.playVideo();
-                        startAggressiveAutoSkip();
-                    },
-                    'onStateChange': onPlayerStateChange
-                }
-            });
-        }
-
-        function onPlayerStateChange(event) {
-            if (event.data === YT.PlayerState.PLAYING) {
-                if (player && player.mute) {
-                    player.mute();
-                    player.setVolume(0);
-                }
-
-                const activeId = player.getVideoData ? player.getVideoData().video_id : '';
-                if (!hasReported && (!activeId || activeId === videoId)) {
-                    hasReported = true;
-
-                    // ⏸️ 1. მომენტალურად ვაპაუზებთ ვიდეოს 0:00-ზე
-                    player.pauseVideo();
-
-                    // 📡 2. FiveM-ს ვაძლევთ ბრძანებას, რომ xsound-მა დაიწყოს ჩატვირთვა
-                    fetch('https://qbx_screens/videoPlaybackStarted', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ status: 'started' })
-                    }).catch(() => {});
-
-                    // ▶️ 3. ზუსტად 1200ms-ში (სანამ xsound აუდიოს გაუშვებს), ვრთავთ ვიდეოს
-                    setTimeout(() => {
-                        if (player && player.playVideo) {
-                            player.playVideo();
-                        }
-                    }, 1200);
-                }
+        function notifyFiveM() {
+            if (!hasReported) {
+                hasReported = true;
+                fetch('https://qbx_screens/videoPlaybackStarted', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'started' })
+                }).catch(() => {});
             }
         }
 
-        // ⚡ Skip Ad ავტო-დაჭერის ძრავი
-        function startAggressiveAutoSkip() {
-            const skipSelectors = [
-                '.ytp-ad-skip-button',
-                '.ytp-ad-skip-button-modern',
-                '.ytp-skip-ad-button',
-                '.ytp-ad-skip-button-slot',
-                'button.ytp-ad-skip-button-modern',
-                '.videoAdUiSkipButton',
-                '.ytp-ad-preview-container',
-                'button[class*="skip"]',
-                'div[class*="skip-button"]'
-            ];
+        // ==========================================
+        // 1. პირდაპირი ნაკადი (.m3u8 HLS / Kinolab / MP4)
+        // ==========================================
+        if (isDirectStream) {
+            const ytDiv = document.getElementById('player');
+            const video = document.getElementById('videoPlayer');
 
-            setInterval(() => {
-                const targets = [document];
-                const iframes = document.querySelectorAll('iframe');
-                iframes.forEach(frame => {
-                    try {
-                        const frameDoc = frame.contentDocument || frame.contentWindow.document;
-                        if (frameDoc) targets.push(frameDoc);
-                    } catch (e) {}
-                });
+            if (ytDiv) ytDiv.style.display = 'none';
+            video.style.display = 'block';
+            video.volume = 1.0;
+            video.muted = false;
 
-                for (const doc of targets) {
-                    try {
-                        const vids = doc.querySelectorAll('video');
-                        vids.forEach(v => {
-                            v.muted = true;
-                            v.volume = 0;
-                            if (v.closest && v.closest('.ad-showing, .ad-interrupting')) {
-                                if (v.duration && !isNaN(v.duration)) {
-                                    v.currentTime = v.duration;
-                                }
-                            }
+            if (streamUrl.includes('.m3u8')) {
+                if (Hls.isSupported()) {
+                    const hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true
+                    });
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        video.play().catch(e => {
+                            console.log('Autoplay unmuted blocked, playing muted fallback:', e);
+                            video.muted = true;
+                            video.play();
                         });
-                    } catch (e) {}
+                        notifyFiveM();
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                    video.play();
+                    notifyFiveM();
+                }
+            } else {
+                // ჩვეულებრივი MP4 ფაილი
+                video.src = streamUrl;
+                video.play().catch(() => {
+                    video.muted = true;
+                    video.play();
+                });
+                notifyFiveM();
+            }
 
-                    for (const sel of skipSelectors) {
-                        try {
-                            const btn = doc.querySelector(sel);
-                            if (btn && typeof btn.click === 'function') {
-                                btn.click();
-                                break;
+            video.addEventListener('playing', () => notifyFiveM());
+        }
+        // ==========================================
+        // 2. YOUTUBE ფლეიერი (Ad-Buster + Freeze Sync)
+        // ==========================================
+        else {
+            videoId = videoId || 'hyF9INcLSZs';
+
+            window.onYouTubeIframeAPIReady = function() {
+                player = new YT.Player('player', {
+                    videoId: videoId,
+                    playerVars: {
+                        autoplay: 1,
+                        mute: 1, // 🔇 YouTube დადამუნჯებულია (ხმა მოდის xsound-იდან)
+                        controls: 0,
+                        showinfo: 0,
+                        rel: 0,
+                        modestbranding: 1,
+                        playsinline: 1,
+                        iv_load_policy: 3,
+                        disablekb: 1,
+                        fs: 0
+                    },
+                    events: {
+                        'onReady': (e) => {
+                            e.target.mute();
+                            e.target.setVolume(0);
+                            e.target.playVideo();
+                            startAggressiveAutoSkip();
+                        },
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+            };
+
+            function onPlayerStateChange(event) {
+                if (event.data === YT.PlayerState.PLAYING) {
+                    if (player && player.mute) {
+                        player.mute();
+                        player.setVolume(0);
+                    }
+
+                    const activeId = player.getVideoData ? player.getVideoData().video_id : '';
+                    if (!hasReported && (!activeId || activeId === videoId)) {
+                        hasReported = true;
+
+                        // ⏸️ 1. ვაპაუზებთ ვიდეოს 0:00-ზე
+                        player.pauseVideo();
+
+                        // 📡 2. FiveM-ს ვატყობინებთ, რომ xsound-მა დაიწყოს ჩატვირთვა
+                        notifyFiveM();
+
+                        // ▶️ 3. 1200ms-ში ვუშვებთ ვიდეოს
+                        setTimeout(() => {
+                            if (player && player.playVideo) {
+                                player.playVideo();
                             }
-                        } catch (e) {}
+                        }, 1200);
                     }
                 }
-            }, 100);
-        }
+            }
 
-        // 🔇 საიტის აუდიოს იძულებითი ჩახშობა
-        setInterval(() => {
-            try {
-                const media = document.querySelectorAll('video, audio');
-                media.forEach(m => {
-                    m.muted = true;
-                    m.volume = 0;
-                });
-            } catch (e) {}
-        }, 200);
+            // ⚡ Skip Ad ავტო-დაჭერის ძრავი
+            function startAggressiveAutoSkip() {
+                const skipSelectors = [
+                    '.ytp-ad-skip-button',
+                    '.ytp-ad-skip-button-modern',
+                    '.ytp-skip-ad-button',
+                    '.ytp-ad-skip-button-slot',
+                    'button.ytp-ad-skip-button-modern',
+                    '.videoAdUiSkipButton',
+                    '.ytp-ad-preview-container',
+                    'button[class*="skip"]',
+                    'div[class*="skip-button"]'
+                ];
+
+                setInterval(() => {
+                    const targets = [document];
+                    const iframes = document.querySelectorAll('iframe');
+                    iframes.forEach(frame => {
+                        try {
+                            const frameDoc = frame.contentDocument || frame.contentWindow.document;
+                            if (frameDoc) targets.push(frameDoc);
+                        } catch (e) {}
+                    });
+
+                    for (const doc of targets) {
+                        try {
+                            const vids = doc.querySelectorAll('video');
+                            vids.forEach(v => {
+                                v.muted = true;
+                                v.volume = 0;
+                                if (v.closest && v.closest('.ad-showing, .ad-interrupting')) {
+                                    if (v.duration && !isNaN(v.duration)) {
+                                        v.currentTime = v.duration;
+                                    }
+                                }
+                            });
+                        } catch (e) {}
+
+                        for (const sel of skipSelectors) {
+                            try {
+                                const btn = doc.querySelector(sel);
+                                if (btn && typeof btn.click === 'function') {
+                                    btn.click();
+                                    break;
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                }, 100);
+            }
+
+            // 🔇 YouTube-ის აუდიოს იძულებითი ჩახშობა (მხოლოდ YouTube-ის დროს!)
+            setInterval(() => {
+                try {
+                    const media = document.querySelectorAll('video, audio');
+                    media.forEach(m => {
+                        m.muted = true;
+                        m.volume = 0;
+                    });
+                } catch (e) {}
+            }, 200);
+        }
     </script>
 </body>
 </html>
