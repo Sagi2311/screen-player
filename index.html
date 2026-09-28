@@ -3,12 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FiveM Cinema & YouTube Player</title>
+    <title>FiveM Cinema & Media Player</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #player, #videoPlayer { width: 100vw; height: 100vh; border: none; object-fit: cover; }
-        #videoPlayer { display: none; }
+        #player, #videoPlayer, #embedPlayer { 
+            width: 100vw; 
+            height: 100vh; 
+            border: none; 
+            object-fit: cover; 
+            display: none; 
+        }
     </style>
     <!-- HLS.js პირდაპირი .m3u8 ნაკადებისთვის -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
@@ -16,21 +21,41 @@
     <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
+    <!-- 1. YouTube ფლეიერის კონტეინერი -->
     <div id="player"></div>
+
+    <!-- 2. პირდაპირი ვიდეოს კონტეინერი (.m3u8 / .mp4) -->
     <video id="videoPlayer" playsinline autoplay></video>
+
+    <!-- 3. გარე საიტების Embed ფლეიერი (თითოეული მოთამაშე იღებს თავის ტოკენს) -->
+    <iframe id="embedPlayer" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen></iframe>
 
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        let streamUrl = urlParams.get('url');
+        let streamUrl = urlParams.get('url') || urlParams.get('embed');
         let videoId = urlParams.get('v');
 
-        // ავტომატური ამოცნობა: თუ 'v'-ში პირდაპირი ბმული მოვიდა
-        if (!streamUrl && videoId && (videoId.startsWith('http://') || videoId.startsWith('https://') || videoId.includes('.m3u8') || videoId.includes('.mp4'))) {
+        // ავტომატური ამოცნობა: თუ 'v'-ში სრული ბმული გადმოეცა
+        if (!streamUrl && videoId && (videoId.startsWith('http://') || videoId.startsWith('https://'))) {
             streamUrl = videoId;
             videoId = null;
         }
 
-        let isDirectStream = !!streamUrl;
+        // ტიპის განსაზღვრა
+        function isYouTubeLink(url) {
+            if (!url) return false;
+            return url.includes('youtube.com') || url.includes('youtu.be') || url.includes('shorts/');
+        }
+
+        function isDirectFile(url) {
+            if (!url) return false;
+            return url.includes('.m3u8') || url.includes('.mp4') || url.includes('.webm');
+        }
+
+        let isYT = !!videoId || isYouTubeLink(streamUrl);
+        let isDirect = !isYT && isDirectFile(streamUrl);
+        let isEmbed = !isYT && !isDirect && !!streamUrl;
+
         let player;
         let hasReported = false;
 
@@ -46,13 +71,19 @@
         }
 
         // ==========================================
-        // 1. პირდაპირი ნაკადი (.m3u8 HLS / Kinolab / MP4)
+        // 1. გარე საიტის EMBED ფლეიერი (ფილმები)
         // ==========================================
-        if (isDirectStream) {
-            const ytDiv = document.getElementById('player');
+        if (isEmbed) {
+            const embedFrame = document.getElementById('embedPlayer');
+            embedFrame.style.display = 'block';
+            embedFrame.src = streamUrl;
+            notifyFiveM();
+        }
+        // ==========================================
+        // 2. პირდაპირი ნაკადი (.m3u8 HLS / MP4)
+        // ==========================================
+        else if (isDirect) {
             const video = document.getElementById('videoPlayer');
-
-            if (ytDiv) ytDiv.style.display = 'none';
             video.style.display = 'block';
             video.volume = 1.0;
             video.muted = false;
@@ -67,7 +98,6 @@
                     hls.attachMedia(video);
                     hls.on(Hls.Events.MANIFEST_PARSED, () => {
                         video.play().catch(e => {
-                            console.log('Autoplay unmuted blocked, playing muted fallback:', e);
                             video.muted = true;
                             video.play();
                         });
@@ -79,7 +109,6 @@
                     notifyFiveM();
                 }
             } else {
-                // ჩვეულებრივი MP4 ფაილი
                 video.src = streamUrl;
                 video.play().catch(() => {
                     video.muted = true;
@@ -91,9 +120,16 @@
             video.addEventListener('playing', () => notifyFiveM());
         }
         // ==========================================
-        // 2. YOUTUBE ფლეიერი (Ad-Buster + Freeze Sync)
+        // 3. YOUTUBE ფლეიერი (Ad-Buster + Freeze Sync)
         // ==========================================
         else {
+            const ytDiv = document.getElementById('player');
+            ytDiv.style.display = 'block';
+
+            if (!videoId && streamUrl) {
+                const match = streamUrl.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+                videoId = match ? match[1] : streamUrl;
+            }
             videoId = videoId || 'hyF9INcLSZs';
 
             window.onYouTubeIframeAPIReady = function() {
@@ -101,7 +137,7 @@
                     videoId: videoId,
                     playerVars: {
                         autoplay: 1,
-                        mute: 1, // 🔇 YouTube დადამუნჯებულია (ხმა მოდის xsound-იდან)
+                        mute: 1,
                         controls: 0,
                         showinfo: 0,
                         rel: 0,
@@ -133,14 +169,8 @@
                     const activeId = player.getVideoData ? player.getVideoData().video_id : '';
                     if (!hasReported && (!activeId || activeId === videoId)) {
                         hasReported = true;
-
-                        // ⏸️ 1. ვაპაუზებთ ვიდეოს 0:00-ზე
                         player.pauseVideo();
-
-                        // 📡 2. FiveM-ს ვატყობინებთ, რომ xsound-მა დაიწყოს ჩატვირთვა
                         notifyFiveM();
-
-                        // ▶️ 3. 1200ms-ში ვუშვებთ ვიდეოს
                         setTimeout(() => {
                             if (player && player.playVideo) {
                                 player.playVideo();
@@ -201,7 +231,7 @@
                 }, 100);
             }
 
-            // 🔇 YouTube-ის აუდიოს იძულებითი ჩახშობა (მხოლოდ YouTube-ის დროს!)
+            // 🔇 YouTube აუდიოს იძულებითი ჩახშობა
             setInterval(() => {
                 try {
                     const media = document.querySelectorAll('video, audio');
